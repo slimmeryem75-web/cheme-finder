@@ -133,8 +133,8 @@ def generate_motivation_letter(profile_text: str, opportunity: dict, api_key: st
     prompt = f"""Write a personalized, professional motivation letter for the following opportunity,
 written in first person as the applicant.
 
-APPLICANT BACKGROUND (from their CV and documents):
-{profile_text[:6000]}
+APPLICANT PROFILE:
+{profile_text[:4000]}
 
 OPPORTUNITY DETAILS:
 Title: {opportunity.get('title')}
@@ -146,10 +146,11 @@ Summary: {opportunity.get('summary')}
 
 Instructions:
 - 350-450 words
-- Highlight relevant skills/experience from the applicant's background that match this specific opportunity
-- Professional but warm tone
-- Include a clear opening, body paragraphs connecting background to the role, and a closing
-- Do not invent specific achievements that are not supported by the background text
+- Base the letter on what the applicant has shared about themselves (their goals, background, and interests)
+- Connect their stated interests and goals to what this specific opportunity offers
+- Professional but warm and genuine tone
+- Structure: strong opening paragraph expressing interest, 2 body paragraphs linking the applicant's background/goals to the opportunity, a closing paragraph with a call to action
+- Do not fabricate specific achievements, grades, or experiences not mentioned in the profile
 - Output plain text only, ready to copy into a document"""
 
     return _generate(prompt, api_key=api_key, max_tokens=1200)
