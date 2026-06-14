@@ -90,18 +90,20 @@ def add_document(uploaded_file, doc_type: str, profile: dict) -> dict:
     return profile
 
 
-def get_combined_profile_text(profile: dict) -> str:
-    """Return a single text blob combining CV + all supporting documents,
-    used as context for the AI when writing letters/CVs."""
+def get_profile_text(profile: dict) -> str:
+    """Return a text summary of the user's profile (name + personal description)
+    used as context for the AI when writing motivation letters."""
     parts = []
+    if profile.get("name"):
+        parts.append("APPLICANT NAME:\n" + profile["name"])
     if profile.get("summary"):
-        parts.append("PERSONAL SUMMARY:\n" + profile["summary"])
-    if profile.get("cv_text"):
-        parts.append("CV CONTENT:\n" + profile["cv_text"])
-    for doc in profile.get("documents", []):
-        if doc["type"] != "CV":
-            parts.append(f"{doc['type'].upper()} ({doc['filename']}):\n{doc['text'][:3000]}")
+        parts.append("PERSONAL DESCRIPTION / CAREER GOALS:\n" + profile["summary"])
     return "\n\n---\n\n".join(parts)
+
+
+# Keep the old name as an alias for backwards compatibility
+def get_combined_profile_text(profile: dict) -> str:
+    return get_profile_text(profile)
 
 
 # ----------------------------------------------------------------------
