@@ -76,7 +76,7 @@ if "profile" not in st.session_state:
     st.session_state.profile = pm.load_profile()
 
 if "opportunities" not in st.session_state:
-    st.session_state.opportunities = []
+    st.session_state.opportunities = pm.load_opportunities()
 
 if "search_seed" not in st.session_state:
     st.session_state.search_seed = random.randint(0, 1_000_000)
@@ -175,8 +175,16 @@ with st.sidebar:
                 extracted = f"[Could not read file: {e}]"
 
             if doc_type == "CV":
-                st.session_state.cv_text_session = extracted
-                profile["cv_text"] = extracted
+                if extracted.strip():
+                    st.session_state.cv_text_session = extracted
+                    profile["cv_text"] = extracted
+                else:
+                    st.warning(
+                        "⚠️ The file was saved, but no text could be extracted from it "
+                        "(this often happens with scanned/image-based PDFs). "
+                        "Generate files will still say 'No CV found' until this is fixed. "
+                        "Try re-exporting your CV as a text-based PDF/DOCX, or upload a .txt version."
+                    )
 
             profile["documents"] = profile.get("documents", [])
             # Avoid duplicates
@@ -205,6 +213,17 @@ with st.sidebar:
     if st.button("💾 Save profile info", use_container_width=True):
         pm.save_profile(profile)
         st.success("Profile saved.")
+
+    with st.expander("🔍 CV status (debug)"):
+        cv_preview = profile.get("cv_text") or st.session_state.cv_text_session
+        if cv_preview:
+            st.success(f"CV text stored: {len(cv_preview)} characters")
+            st.text_area("Preview (first 1000 chars)", cv_preview[:1000], height=150)
+        else:
+            st.error(
+                "No CV text stored. Upload a PDF/DOCX/TXT, set Document type = CV, "
+                "and click 'Save document'."
+            )
 
 # ----------------------------------------------------------------------
 # Filters
@@ -322,11 +341,20 @@ if search_clicked:
                 structured = ai.structure_opportunities(
                     raw, search_field, api_key=st.session_state["api_key"]
                 )
-            st.session_state.opportunities = structured
             if not structured:
                 st.warning(
                     "AI could not extract structured opportunities. "
                     "Check your Groq API key and try a more specific field."
+                )
+            else:
+                merged, added = pm.merge_opportunities(
+                    st.session_state.opportunities, structured
+                )
+                st.session_state.opportunities = merged
+                pm.save_opportunities(merged)
+                st.success(
+                    f"✅ Added {added} new opportunit{'y' if added == 1 else 'ies'} "
+                    f"(total saved so far: {len(merged)})."
                 )
 
 # ----------------------------------------------------------------------
@@ -352,6 +380,12 @@ display_list = [o for o in st.session_state.opportunities if matches_filters(o)]
 # Display results
 # ----------------------------------------------------------------------
 st.subheader(f"📋 Opportunities ({len(display_list)})")
+
+if st.session_state.opportunities:
+    if st.button("🗑️ Clear all saved opportunities"):
+        st.session_state.opportunities = []
+        pm.clear_opportunities()
+        st.rerun()
 
 if not display_list:
     st.info(
