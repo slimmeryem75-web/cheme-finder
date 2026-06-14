@@ -11,7 +11,7 @@ import re
 import requests
 
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama3-8b-8192"
+MODEL = "llama-3.3-70b-versatile"
 
 
 def _generate(prompt: str, api_key: str = None, max_tokens: int = 1500) -> str:
