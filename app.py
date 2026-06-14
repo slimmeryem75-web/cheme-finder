@@ -335,4 +335,143 @@ if search_clicked:
 def matches_filters(opp):
     if degree != "Any" and opp.get("degree_level") not in (degree, "Any", "Not specified"):
         return False
-    if funding != "Any" and opp.get("funding") not in (funding,
+    if funding != "Any" and opp.get("funding") not in (funding, "Not specified"):
+        return False
+    if opp_type != "Any":
+        title_lower = opp.get("title", "").lower()
+        summary_lower = opp.get("summary", "").lower()
+        keyword = opp_type.lower()
+        if keyword not in title_lower and keyword not in summary_lower:
+            return False
+    return True
+
+
+display_list = [o for o in st.session_state.opportunities if matches_filters(o)]
+
+# ----------------------------------------------------------------------
+# Display results
+# ----------------------------------------------------------------------
+st.subheader(f"📋 Opportunities ({len(display_list)})")
+
+if not display_list:
+    st.info(
+        "No opportunities loaded yet. Set your filters above and click **Search for Opportunities**."
+    )
+else:
+    for idx, opp in enumerate(display_list):
+        with st.container():
+            st.markdown(
+                f"""
+<div class="opportunity-card">
+  <div class="opportunity-title">{opp.get('title','Untitled')}</div>
+  <div class="opportunity-org">{opp.get('organization','Unknown organization')} — {opp.get('location','Not specified')}</div>
+  <span class="badge badge-deadline">⏰ Deadline: {opp.get('deadline','Not specified')}</span>
+  <span class="badge badge-funding">💰 {opp.get('funding','Not specified')}</span>
+  <span class="badge badge-degree">🎓 {opp.get('degree_level','Not specified')}</span>
+  <span class="badge badge-field">🧪 {opp.get('field','Not specified')}</span>
+  <span class="badge badge-source">🌐 {opp.get('source','Web')}</span>
+  <p style="margin-top:8px;">{opp.get('summary','')}</p>
+  <p style="font-size:0.85rem; color:#777;">
+    📅 Period: {opp.get('period','Not specified')} &nbsp;|&nbsp;
+    ⌛ Duration: {opp.get('duration','Not specified')} &nbsp;|&nbsp;
+    📧 Contact: {opp.get('contact','Not specified')}
+  </p>
+  <a href="{opp.get('link','#')}" target="_blank">🔗 Open original listing</a>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+            with st.expander("✨ Generate personalized application materials"):
+                # Use session-stored CV text (survives filesystem resets)
+                profile_text = pm.get_combined_profile_text(st.session_state.profile)
+
+                # Fallback to session cv text if profile_manager returns empty
+                if not profile_text.strip() and st.session_state.cv_text_session:
+                    profile_text = st.session_state.cv_text_session
+
+                if not profile_text.strip():
+                    st.warning(
+                        "⚠️ No CV found. Please upload your CV in the sidebar and click **Save document**."
+                    )
+                else:
+                    st.success("✅ CV loaded — ready to generate materials.")
+                    bcol1, bcol2, bcol3 = st.columns(3)
+
+                    with bcol1:
+                        if st.button("📝 Motivation Letter", key=f"letter_{idx}"):
+                            with st.spinner("Writing motivation letter..."):
+                                letter = ai.generate_motivation_letter(
+                                    profile_text, opp, api_key=st.session_state["api_key"]
+                                )
+                            st.session_state[f"letter_text_{idx}"] = letter
+
+                    with bcol2:
+                        if st.button("📧 Outreach Email", key=f"email_{idx}"):
+                            with st.spinner("Writing email..."):
+                                email = ai.generate_email(
+                                    profile_text, opp, api_key=st.session_state["api_key"]
+                                )
+                            st.session_state[f"email_text_{idx}"] = email
+
+                    with bcol3:
+                        if st.button("📄 Tailored CV Sections", key=f"cv_{idx}"):
+                            with st.spinner("Tailoring CV..."):
+                                cv_text = ai.generate_tailored_cv_sections(
+                                    profile_text, opp, api_key=st.session_state["api_key"]
+                                )
+                            st.session_state[f"cv_text_{idx}"] = cv_text
+
+                    if f"letter_text_{idx}" in st.session_state:
+                        st.text_area(
+                            "Motivation Letter",
+                            st.session_state[f"letter_text_{idx}"],
+                            height=300,
+                            key=f"letter_area_{idx}",
+                        )
+                        st.download_button(
+                            "⬇️ Download Letter (.docx)",
+                            data=text_to_docx_bytes(
+                                st.session_state[f"letter_text_{idx}"], "Motivation Letter"
+                            ),
+                            file_name=f"motivation_letter_{idx+1}.docx",
+                            key=f"dl_letter_{idx}",
+                        )
+
+                    if f"email_text_{idx}" in st.session_state:
+                        st.text_area(
+                            "Outreach Email",
+                            st.session_state[f"email_text_{idx}"],
+                            height=200,
+                            key=f"email_area_{idx}",
+                        )
+                        st.download_button(
+                            "⬇️ Download Email (.docx)",
+                            data=text_to_docx_bytes(
+                                st.session_state[f"email_text_{idx}"], "Outreach Email"
+                            ),
+                            file_name=f"email_{idx+1}.docx",
+                            key=f"dl_email_{idx}",
+                        )
+
+                    if f"cv_text_{idx}" in st.session_state:
+                        st.text_area(
+                            "Tailored CV Sections",
+                            st.session_state[f"cv_text_{idx}"],
+                            height=300,
+                            key=f"cv_area_{idx}",
+                        )
+                        st.download_button(
+                            "⬇️ Download CV Sections (.docx)",
+                            data=text_to_docx_bytes(
+                                st.session_state[f"cv_text_{idx}"], "Tailored CV Sections"
+                            ),
+                            file_name=f"tailored_cv_{idx+1}.docx",
+                            key=f"dl_cv_{idx}",
+                        )
+
+st.divider()
+st.caption(
+    "⚠️ Always verify deadlines and details on the original listing before applying. "
+    "AI-generated text should be reviewed and personalized further before sending."
+)
