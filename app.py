@@ -80,6 +80,9 @@ if "opportunities" not in st.session_state:
 if "search_seed" not in st.session_state:
     st.session_state.search_seed = random.randint(0, 1_000_000)
 
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = os.environ.get("GROQ_API_KEY", "")
+
 
 # ----------------------------------------------------------------------
 # Helper: text -> docx bytes
@@ -112,17 +115,15 @@ def text_to_docx_bytes(text: str, title: str = "") -> bytes:
 # ----------------------------------------------------------------------
 with st.sidebar:
     st.header("🔑 Groq API Key (Free)")
-    api_key_input = st.text_input(
+    st.text_input(
         "Groq API Key",
         type="password",
-        value=os.environ.get("GROQ_API_KEY", ""),
         help=(
             "100% free, no credit card needed. "
             "Get your key at https://console.groq.com"
         ),
+        key="api_key",
     )
-    if api_key_input:
-        st.session_state["api_key"] = api_key_input
 
     st.divider()
     st.header("👤 Your Profile")
@@ -293,7 +294,7 @@ def matches_filters(opp):
     return True
 
 
-display_list = [o for o in st.session_state.opportunities if matches_filters(o)]
+display_list = [o for o in reversed(st.session_state.opportunities) if matches_filters(o)]
 
 # ----------------------------------------------------------------------
 # Display results
@@ -346,12 +347,20 @@ else:
                     )
                 else:
                     if st.button("📝 Generate Motivation Letter", key=f"letter_{idx}"):
-                        profile_text = pm.get_profile_text(profile)
-                        with st.spinner("Writing motivation letter..."):
-                            letter = ai.generate_motivation_letter(
-                                profile_text, opp, api_key=st.session_state["api_key"]
-                            )
-                        st.session_state[f"letter_text_{idx}"] = letter
+                        if not st.session_state.get("api_key"):
+                            st.error("❌ Please enter your Groq API key in the sidebar first.")
+                        else:
+                            profile_text = pm.get_profile_text(profile)
+                            with st.spinner("Writing motivation letter..."):
+                                try:
+                                    letter = ai.generate_motivation_letter(
+                                        profile_text, opp, api_key=st.session_state["api_key"]
+                                    )
+                                    st.session_state[f"letter_text_{idx}"] = letter
+                                except RuntimeError as e:
+                                    st.error(f"❌ {e}")
+                                except Exception as e:
+                                    st.error(f"❌ Unexpected error: {e}")
 
                     if f"letter_text_{idx}" in st.session_state:
                         st.text_area(
