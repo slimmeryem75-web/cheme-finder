@@ -1,17 +1,8 @@
 """
 ai_engine.py
-Calls Google's Gemini API (FREE tier, no credit card required) directly via
-plain HTTP requests - no heavy SDK needed, so installs/deploys instantly.
-
- 1. Turning raw search results into structured opportunity cards
-    (title, organization, location, deadline, period, funding, field, contact)
- 2. Generating a personalized motivation letter
- 3. Generating a personalized outreach email
- 4. Generating a tailored CV summary/bullet-points for a specific opportunity
-
-Get a free API key at https://aistudio.google.com (no credit card needed).
-Set it as the GOOGLE_API_KEY environment variable, or enter it in the app
-sidebar.
+Uses Groq API (100% free, no credit card) with Llama 3.
+Get your free key at https://console.groq.com
+Works on Streamlit Cloud with no restrictions.
 """
 
 import json
@@ -19,65 +10,34 @@ import os
 import re
 import requests
 
-# Models tried in order until one works (all free-tier eligible)
-MODELS = [
-       "gemini-2.0-flash",
-       "gemini-1.5-flash-latest",
-       "gemini-1.5-flash-8b",
-]
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
+MODEL = "llama3-8b-8192"
 
 
 def _generate(prompt: str, api_key: str = None, max_tokens: int = 1500) -> str:
-    key = api_key or os.environ.get("GOOGLE_API_KEY")
+    key = api_key or os.environ.get("GROQ_API_KEY")
     if not key:
-        raise ValueError("No Google Gemini API key provided.")
+        raise ValueError("No Groq API key provided.")
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
+    response = requests.post(
+        API_URL,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
         },
-    }
-
-    last_error = None
-    for model in MODELS:
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        try:
-            response = requests.post(
-                f"{api_url}?key={key}",
-                headers={"Content-Type": "application/json"},
-                json=payload,
-                timeout=60,
-            )
-            if response.status_code in (400, 404):
-                print(f"[ai_engine] Model {model} unavailable ({response.status_code}), trying next...")
-                last_error = f"HTTP {response.status_code}"
-                continue
-            response.raise_for_status()
-            data = response.json()
-            try:
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                print(f"[ai_engine] Success with model: {model}")
-                return text
-            except (KeyError, IndexError):
-                finish_reason = data.get("candidates", [{}])[0].get("finishReason", "unknown")
-                return f"[No content returned by model - finish reason: {finish_reason}]"
-        except Exception as e:
-            print(f"[ai_engine] Model {model} failed: {e}")
-            last_error = str(e)
-            continue
-
-    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def structure_opportunities(raw_results: list, field: str, api_key: str = None) -> list:
-    """
-    Send a batch of raw search results to Gemini and ask it to extract
-    structured opportunity info. Returns a list of dicts with keys:
-    title, organization, location, deadline, period, duration, funding,
-    degree_level, field, contact, link, summary
-    """
     if not raw_results:
         return []
 
@@ -101,18 +61,17 @@ internships, fellowships, PhD positions, and lab/company contacts.
 
 Below is a list of raw web search results. For EACH item, extract what you can
 into a structured JSON object. If information is not present in the snippet,
-make a reasonable best guess based on context, or use "Not specified".
-Do NOT invent fake links or contacts - only use what's given.
+use "Not specified". Do NOT invent fake links or contacts.
 
 Discard items that are clearly irrelevant (not about internships, fellowships,
 PhD/research positions, or job opportunities for chemical engineers / related
 fields like materials science, process engineering, energy, biotech, etc.)
 by simply not including them in the output.
 
-For each relevant item return an object with these fields:
+For each relevant item return an object with these exact keys:
 - "title": short opportunity title
 - "organization": company, university, or lab name
-- "location": city/country or "Remote"/"Not specified"
+- "location": city/country or "Remote" or "Not specified"
 - "deadline": application deadline if mentioned, else "Not specified"
 - "period": e.g. "Summer 2026", "Fall 2026", or "Not specified"
 - "duration": e.g. "3 months", "6 months", "1 year", or "Not specified"
@@ -129,23 +88,20 @@ Search field of interest: {field}
 Raw results:
 {listing_text}
 
-Return ONLY a valid JSON array of objects, nothing else. No markdown fences, no preamble."""
+Return ONLY a valid JSON array of objects. No markdown fences, no explanation, no preamble. Just the JSON array."""
 
         try:
             text = _generate(prompt, api_key=api_key, max_tokens=2500).strip()
         except Exception as e:
-            print(f"[ai_engine] _generate error on chunk {i}: {e}")
+            print(f"[ai_engine] Error on chunk {i}: {e}")
             continue
 
-        print(f"[ai_engine] Raw Gemini response (chunk {i}, first 300 chars): {text[:300]}")
+        print(f"[ai_engine] Raw response (chunk {i}, first 300 chars): {text[:300]}")
 
-        # Robustly strip markdown fences like ```json ... ``` or ``` ... ```
         fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if fence_match:
             text = fence_match.group(1).strip()
         else:
-            # No fences — strip any leading/trailing non-JSON characters
-            # Find the first '[' and last ']' to extract the array
             start = text.find("[")
             end = text.rfind("]")
             if start != -1 and end != -1 and end > start:
@@ -153,11 +109,9 @@ Return ONLY a valid JSON array of objects, nothing else. No markdown fences, no 
 
         try:
             parsed = json.loads(text)
-            # Handle both a bare array and {"opportunities": [...]} style wrapping
             if isinstance(parsed, list):
                 items = parsed
             elif isinstance(parsed, dict):
-                # Try common wrapper keys
                 for key in ("opportunities", "results", "data", "items"):
                     if isinstance(parsed.get(key), list):
                         items = parsed[key]
@@ -169,15 +123,15 @@ Return ONLY a valid JSON array of objects, nothing else. No markdown fences, no 
             print(f"[ai_engine] Parsed {len(items)} opportunities from chunk {i}")
             structured.extend(items)
         except json.JSONDecodeError as e:
-            print(f"[ai_engine] JSON parse error on chunk {i}: {e}\nText was: {text[:500]}")
+            print(f"[ai_engine] JSON parse error on chunk {i}: {e}\nText: {text[:500]}")
             continue
 
     return structured
 
 
 def generate_motivation_letter(profile_text: str, opportunity: dict, api_key: str = None) -> str:
-    prompt = f"""Write a personalized, professional motivation letter (cover letter) for the
-following opportunity, written in first person as the applicant.
+    prompt = f"""Write a personalized, professional motivation letter for the following opportunity,
+written in first person as the applicant.
 
 APPLICANT BACKGROUND (from their CV and documents):
 {profile_text[:6000]}
@@ -223,7 +177,7 @@ Instructions:
   Body...
 - Keep the email under 200 words
 - Mention 1-2 specific relevant qualifications
-- Politely ask about application steps / express interest in an internship arrangement
+- Politely ask about application steps / express interest
 - Professional, concise, friendly tone
 - Output plain text only"""
 
@@ -231,11 +185,6 @@ Instructions:
 
 
 def generate_tailored_cv_sections(profile_text: str, opportunity: dict, api_key: str = None) -> str:
-    """
-    Returns a tailored 'Professional Summary' + reordered/highlighted
-    'Key Skills & Experience' bullet points the user can paste into their
-    CV template for this specific opportunity.
-    """
     prompt = f"""Based on the applicant's existing CV/background below, produce a TAILORED
 CV section for the specific opportunity described. Do not fabricate new
 experience - only reorganize, rephrase, and emphasize what's already there.
