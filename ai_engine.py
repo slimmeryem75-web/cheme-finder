@@ -1,6 +1,8 @@
 """
 ai_engine.py
-Wraps calls to Google's Gemini API (FREE tier, no credit card required) for:
+Calls Google's Gemini API (FREE tier, no credit card required) directly via
+plain HTTP requests - no heavy SDK needed, so installs/deploys instantly.
+
  1. Turning raw search results into structured opportunity cards
     (title, organization, location, deadline, period, funding, field, contact)
  2. Generating a personalized motivation letter
@@ -14,29 +16,40 @@ sidebar.
 
 import json
 import os
-import google.generativeai as genai
+import requests
 
 MODEL = "gemini-2.5-flash"
-
-
-def _model(api_key: str = None):
-    key = api_key or os.environ.get("GOOGLE_API_KEY")
-    if not key:
-        raise ValueError("No Google Gemini API key provided.")
-    genai.configure(api_key=key)
-    return genai.GenerativeModel(MODEL)
+API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 
 def _generate(prompt: str, api_key: str = None, max_tokens: int = 1500) -> str:
-    model = _model(api_key)
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(
-            max_output_tokens=max_tokens,
-            temperature=0.7,
-        ),
+    key = api_key or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise ValueError("No Google Gemini API key provided.")
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": 0.7,
+        },
+    }
+
+    response = requests.post(
+        f"{API_URL}?key={key}",
+        headers={"Content-Type": "application/json"},
+        json=payload,
+        timeout=60,
     )
-    return response.text
+    response.raise_for_status()
+    data = response.json()
+
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        # Handle blocked/empty responses gracefully
+        finish_reason = data.get("candidates", [{}])[0].get("finishReason", "unknown")
+        return f"[No content returned by model - finish reason: {finish_reason}]"
 
 
 def structure_opportunities(raw_results: list, field: str, api_key: str = None) -> list:
