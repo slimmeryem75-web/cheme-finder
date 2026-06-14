@@ -228,13 +228,23 @@ if search_clicked:
                 seed=st.session_state.search_seed,
             )
 
-        with st.spinner("Organizing results with AI..."):
-            structured = ai.structure_opportunities(raw, field, api_key=st.session_state["api_key"])
-
-        st.session_state.opportunities = structured
-        if not structured:
-            st.warning("No structured opportunities found this time — try clicking Search again "
-                       "(results rotate each time) or loosen your filters.")
+        if not raw:
+            st.error(
+                "⚠️ Web search returned 0 results. "
+                "DuckDuckGo may be rate-limiting this deployment. "
+                "Wait 30 seconds and try again, or check your internet connection."
+            )
+        else:
+            st.info(f"🔎 Found {len(raw)} raw search results — asking AI to structure them...")
+            with st.spinner("Organizing results with AI..."):
+                structured = ai.structure_opportunities(raw, field, api_key=st.session_state["api_key"])
+            st.session_state.opportunities = structured
+            if not structured:
+                st.warning(
+                    f"AI could not extract structured opportunities from {len(raw)} raw results. "
+                    "This usually means the Gemini API key is wrong/expired, or results were "
+                    "too generic. Check your API key in the sidebar and try a more specific field."
+                )
 
 # ----------------------------------------------------------------------
 # Apply filters to existing results (client-side refine, no new search)
