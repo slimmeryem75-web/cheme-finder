@@ -206,6 +206,31 @@ include_social = st.checkbox(
 
 search_clicked = st.button("🔄  Search for Opportunities", type="primary", use_container_width=True)
 
+if st.button("🧪 Test Gemini API Key", use_container_width=True):
+    if "api_key" not in st.session_state or not st.session_state["api_key"]:
+        st.error("Enter your API key in the sidebar first.")
+    else:
+        import requests as _req
+        key = st.session_state["api_key"]
+        models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
+        found = False
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            try:
+                r = _req.post(url, json={"contents": [{"parts": [{"text": "Say hello in one word."}]}]}, timeout=15)
+                if r.status_code == 200:
+                    reply = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    st.success(f"Model **{model}** works! Response: {reply.strip()}")
+                    found = True
+                    break
+                else:
+                    err = r.json().get("error", {}).get("message", "unknown")
+                    st.warning(f"Model **{model}**: HTTP {r.status_code} — {err}")
+            except Exception as e:
+                st.warning(f"Model **{model}**: Exception — {e}")
+        if not found:
+            st.error("All models failed. The exact errors are shown above.")
+
 # ----------------------------------------------------------------------
 # Run search
 # ----------------------------------------------------------------------
