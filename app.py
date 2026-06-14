@@ -65,8 +65,7 @@ st.markdown("""
 st.title("🧪 Chemical Engineering Opportunity Finder")
 st.caption(
     "Live search across the web for internships, fellowships, scholarships, "
-    "summer programs, and PhD positions — plus AI-generated motivation letters, "
-    "emails, and tailored CVs."
+    "summer programs, and PhD positions — plus AI-generated motivation letters."
 )
 
 # ----------------------------------------------------------------------
@@ -80,10 +79,6 @@ if "opportunities" not in st.session_state:
 
 if "search_seed" not in st.session_state:
     st.session_state.search_seed = random.randint(0, 1_000_000)
-
-# CV text stored in session so it survives even if filesystem resets
-if "cv_text_session" not in st.session_state:
-    st.session_state.cv_text_session = ""
 
 
 # ----------------------------------------------------------------------
@@ -137,93 +132,18 @@ with st.sidebar:
     profile["summary"] = st.text_area(
         "Short personal description / career goals",
         value=profile.get("summary", ""),
-        height=120,
+        height=180,
         placeholder=(
             "e.g. 3rd-year Chemical Engineering student interested in "
-            "sustainable polymers and process optimization..."
+            "sustainable polymers and process optimization. "
+            "Experience with Python, MATLAB, and lab work in catalysis. "
+            "Looking for research internships in Europe or North America..."
         ),
     )
 
-    st.markdown("**Upload your CV / documents**")
-    doc_type = st.selectbox(
-        "Document type",
-        ["CV", "Reference Letter", "Certification", "Transcript", "Other"],
-    )
-    uploaded = st.file_uploader(
-        "Drop a file (PDF, DOCX, or TXT)",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=False,
-        key="doc_uploader",
-    )
-    if uploaded is not None:
-        if st.button("Save document", use_container_width=True):
-            # Extract text immediately and store in session state
-            file_bytes = uploaded.read()
-            ext = uploaded.name.lower().split(".")[-1]
-            extracted = ""
-            try:
-                if ext == "pdf":
-                    from pypdf import PdfReader
-                    reader = PdfReader(io.BytesIO(file_bytes))
-                    extracted = "\n".join(p.extract_text() or "" for p in reader.pages)
-                elif ext in ("docx", "doc"):
-                    doc_obj = Document(io.BytesIO(file_bytes))
-                    extracted = "\n".join(p.text for p in doc_obj.paragraphs)
-                elif ext == "txt":
-                    extracted = file_bytes.decode("utf-8", errors="ignore")
-            except Exception as e:
-                extracted = f"[Could not read file: {e}]"
-
-            if doc_type == "CV":
-                if extracted.strip():
-                    st.session_state.cv_text_session = extracted
-                    profile["cv_text"] = extracted
-                else:
-                    st.warning(
-                        "⚠️ The file was saved, but no text could be extracted from it "
-                        "(this often happens with scanned/image-based PDFs). "
-                        "Generate files will still say 'No CV found' until this is fixed. "
-                        "Try re-exporting your CV as a text-based PDF/DOCX, or upload a .txt version."
-                    )
-
-            profile["documents"] = profile.get("documents", [])
-            # Avoid duplicates
-            profile["documents"] = [
-                d for d in profile["documents"] if d.get("filename") != uploaded.name
-            ]
-            profile["documents"].append({
-                "filename": uploaded.name,
-                "type": doc_type,
-                "text": extracted,
-            })
-            st.session_state.profile = profile
-            pm.save_profile(profile)
-            st.success(f"✅ Saved {uploaded.name} as {doc_type}")
-            st.rerun()
-
-    # Show saved documents
-    if profile.get("documents"):
-        st.markdown("**Saved documents:**")
-        for d in profile["documents"]:
-            st.write(f"- {d['filename']}  _({d['type']})_")
-        # Restore cv_text_session if empty but profile has it
-        if not st.session_state.cv_text_session and profile.get("cv_text"):
-            st.session_state.cv_text_session = profile["cv_text"]
-
-    if st.button("💾 Save profile info", use_container_width=True):
+    if st.button("💾 Save profile", use_container_width=True):
         pm.save_profile(profile)
         st.success("Profile saved.")
-
-    with st.expander("🔍 CV status (debug)"):
-        cv_preview = profile.get("cv_text") or st.session_state.cv_text_session
-        if cv_preview:
-            st.success(f"CV text stored: {len(cv_preview)} characters")
-            st.text_area("Preview (first 1000 chars)", cv_preview[:1000], height=150)
-        else:
-            st.error(
-                "No CV text stored. Upload a PDF/DOCX/TXT, set Document type = CV, "
-                "and click 'Save document'."
-            )
 
 # ----------------------------------------------------------------------
 # Filters
@@ -313,7 +233,6 @@ if search_clicked:
     else:
         st.session_state.search_seed = random.randint(0, 1_000_000)
 
-        # Build search term incorporating opportunity type
         search_field = field
         if opp_type != "Any":
             search_field = f"{field} {opp_type}"
@@ -416,51 +335,29 @@ else:
                 unsafe_allow_html=True,
             )
 
-            with st.expander("✨ Generate personalized application materials"):
-                # Use session-stored CV text (survives filesystem resets)
-                profile_text = pm.get_combined_profile_text(st.session_state.profile)
+            with st.expander("✨ Generate motivation letter"):
+                profile = st.session_state.profile
+                has_profile = bool(profile.get("name") or profile.get("summary"))
 
-                # Fallback to session cv text if profile_manager returns empty
-                if not profile_text.strip() and st.session_state.cv_text_session:
-                    profile_text = st.session_state.cv_text_session
-
-                if not profile_text.strip():
+                if not has_profile:
                     st.warning(
-                        "⚠️ No CV found. Please upload your CV in the sidebar and click **Save document**."
+                        "⚠️ Please fill in your name and personal description in the sidebar "
+                        "so the AI can personalize your letter."
                     )
                 else:
-                    st.success("✅ CV loaded — ready to generate materials.")
-                    bcol1, bcol2, bcol3 = st.columns(3)
-
-                    with bcol1:
-                        if st.button("📝 Motivation Letter", key=f"letter_{idx}"):
-                            with st.spinner("Writing motivation letter..."):
-                                letter = ai.generate_motivation_letter(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"letter_text_{idx}"] = letter
-
-                    with bcol2:
-                        if st.button("📧 Outreach Email", key=f"email_{idx}"):
-                            with st.spinner("Writing email..."):
-                                email = ai.generate_email(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"email_text_{idx}"] = email
-
-                    with bcol3:
-                        if st.button("📄 Tailored CV Sections", key=f"cv_{idx}"):
-                            with st.spinner("Tailoring CV..."):
-                                cv_text = ai.generate_tailored_cv_sections(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"cv_text_{idx}"] = cv_text
+                    if st.button("📝 Generate Motivation Letter", key=f"letter_{idx}"):
+                        profile_text = pm.get_profile_text(profile)
+                        with st.spinner("Writing motivation letter..."):
+                            letter = ai.generate_motivation_letter(
+                                profile_text, opp, api_key=st.session_state["api_key"]
+                            )
+                        st.session_state[f"letter_text_{idx}"] = letter
 
                     if f"letter_text_{idx}" in st.session_state:
                         st.text_area(
                             "Motivation Letter",
                             st.session_state[f"letter_text_{idx}"],
-                            height=300,
+                            height=350,
                             key=f"letter_area_{idx}",
                         )
                         st.download_button(
@@ -470,38 +367,6 @@ else:
                             ),
                             file_name=f"motivation_letter_{idx+1}.docx",
                             key=f"dl_letter_{idx}",
-                        )
-
-                    if f"email_text_{idx}" in st.session_state:
-                        st.text_area(
-                            "Outreach Email",
-                            st.session_state[f"email_text_{idx}"],
-                            height=200,
-                            key=f"email_area_{idx}",
-                        )
-                        st.download_button(
-                            "⬇️ Download Email (.docx)",
-                            data=text_to_docx_bytes(
-                                st.session_state[f"email_text_{idx}"], "Outreach Email"
-                            ),
-                            file_name=f"email_{idx+1}.docx",
-                            key=f"dl_email_{idx}",
-                        )
-
-                    if f"cv_text_{idx}" in st.session_state:
-                        st.text_area(
-                            "Tailored CV Sections",
-                            st.session_state[f"cv_text_{idx}"],
-                            height=300,
-                            key=f"cv_area_{idx}",
-                        )
-                        st.download_button(
-                            "⬇️ Download CV Sections (.docx)",
-                            data=text_to_docx_bytes(
-                                st.session_state[f"cv_text_{idx}"], "Tailored CV Sections"
-                            ),
-                            file_name=f"tailored_cv_{idx+1}.docx",
-                            key=f"dl_cv_{idx}",
                         )
 
 st.divider()
