@@ -16,6 +16,7 @@ sidebar.
 
 import json
 import os
+import re
 import requests
 
 MODEL = "gemini-2.5-flash"
@@ -114,20 +115,43 @@ Return ONLY a valid JSON array of objects, nothing else. No markdown fences, no 
 
         try:
             text = _generate(prompt, api_key=api_key, max_tokens=2500).strip()
-        except Exception:
+        except Exception as e:
+            print(f"[ai_engine] _generate error on chunk {i}: {e}")
             continue
 
-        # strip accidental markdown fences
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.strip()
+        print(f"[ai_engine] Raw Gemini response (chunk {i}, first 300 chars): {text[:300]}")
+
+        # Robustly strip markdown fences like ```json ... ``` or ``` ... ```
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        if fence_match:
+            text = fence_match.group(1).strip()
+        else:
+            # No fences — strip any leading/trailing non-JSON characters
+            # Find the first '[' and last ']' to extract the array
+            start = text.find("[")
+            end = text.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                text = text[start:end + 1]
 
         try:
-            items = json.loads(text)
+            parsed = json.loads(text)
+            # Handle both a bare array and {"opportunities": [...]} style wrapping
+            if isinstance(parsed, list):
+                items = parsed
+            elif isinstance(parsed, dict):
+                # Try common wrapper keys
+                for key in ("opportunities", "results", "data", "items"):
+                    if isinstance(parsed.get(key), list):
+                        items = parsed[key]
+                        break
+                else:
+                    items = list(parsed.values())[0] if parsed else []
+            else:
+                items = []
+            print(f"[ai_engine] Parsed {len(items)} opportunities from chunk {i}")
             structured.extend(items)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            print(f"[ai_engine] JSON parse error on chunk {i}: {e}\nText was: {text[:500]}")
             continue
 
     return structured
