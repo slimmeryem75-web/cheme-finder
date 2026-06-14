@@ -3,6 +3,10 @@ search_engine.py
 Performs real-time web searches for internships, fellowships, research
 positions and lab/company contacts relevant to chemical engineering.
 
+This module uses DuckDuckGo's HTML search endpoint via plain `requests` +
+`BeautifulSoup` (no heavy/compiled dependencies, so it installs instantly
+on Streamlit Cloud).
+
 IMPORTANT NOTE ON SOCIAL MEDIA:
 LinkedIn, X (Twitter), Instagram and Facebook do not allow automated
 scraping of their pages (this breaks their Terms of Service and is
@@ -13,9 +17,18 @@ what this module does. Results that come from those domains will be clearly
 labeled with their source platform.
 """
 
-from duckduckgo_search import DDGS
 import time
 import random
+from urllib.parse import urlparse, parse_qs, unquote
+
+import requests
+from bs4 import BeautifulSoup
+
+SEARCH_URL = "https://html.duckduckgo.com/html/"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+}
 
 # Domains we specifically search within for social/job platforms
 SOCIAL_SITES = {
@@ -49,7 +62,6 @@ def _build_queries(field: str, place: str, degree: str, funding: str,
         f"{field} graduate trainee",
     ]
 
-    # Adjust base terms for degree level
     if degree and degree != "Any":
         base_terms = [f"{t} {degree}" for t in base_terms]
 
@@ -67,7 +79,6 @@ def _build_queries(field: str, place: str, degree: str, funding: str,
         q += " apply deadline"
         queries.append(q)
 
-        # Add general source-restricted variants (a sample, not all, to keep it fast)
         for src in random.sample(GENERAL_SOURCES, 2):
             queries.append(f"{q} {src}")
 
@@ -79,6 +90,61 @@ def _build_queries(field: str, place: str, degree: str, funding: str,
             queries.append(q)
 
     return queries
+
+
+def _clean_ddg_link(href: str) -> str:
+    """DuckDuckGo HTML results wrap real URLs like /l/?uddg=<encoded_url>."""
+    if not href:
+        return href
+    if href.startswith("//"):
+        href = "https:" + href
+    if "duckduckgo.com/l/" in href or href.startswith("/l/"):
+        parsed = urlparse(href)
+        qs = parse_qs(parsed.query)
+        if "uddg" in qs:
+            return unquote(qs["uddg"][0])
+    return href
+
+
+def _run_single_query(query: str, results_per_query: int = 6) -> list:
+    """Run one query against DuckDuckGo's HTML endpoint and parse results."""
+    results = []
+    try:
+        resp = requests.post(
+            SEARCH_URL,
+            data={"q": query},
+            headers=HEADERS,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        for result in soup.select(".result")[:results_per_query]:
+            title_tag = result.select_one(".result__title a")
+            snippet_tag = result.select_one(".result__snippet")
+            if not title_tag:
+                continue
+
+            link = _clean_ddg_link(title_tag.get("href", ""))
+            title = title_tag.get_text(strip=True)
+            snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+
+            if not link:
+                continue
+
+            results.append({
+                "title": title,
+                "link": link,
+                "snippet": snippet,
+            })
+    except Exception as e:
+        results.append({
+            "title": f"[Search error for query: {query}]",
+            "link": "",
+            "snippet": str(e),
+            "error": True,
+        })
+    return results
 
 
 def search_opportunities(field: str, place: str, degree: str, funding: str,
@@ -104,39 +170,45 @@ def search_opportunities(field: str, place: str, degree: str, funding: str,
     results = []
     seen_links = set()
 
-    with DDGS() as ddgs:
-        for q in queries:
-            try:
-                for r in ddgs.text(q, max_results=results_per_query):
-                    link = r.get("href") or r.get("link")
-                    if not link or link in seen_links:
-                        continue
-                    seen_links.add(link)
+    for q in queries:
+        raw_results = _run_single_query(q, results_per_query=results_per_query)
 
-                    # Determine which "platform" this came from for labeling
-                    source = "Web"
-                    for label, _ in SOCIAL_SITES.items():
-                        domain = label.split(" / ")[0].lower().replace(" ", "")
-                        if domain in link.lower() or (label == "X / Twitter" and ("x.com" in link or "twitter.com" in link)):
-                            source = label
-                            break
-
-                    results.append({
-                        "title": r.get("title", "Untitled"),
-                        "link": link,
-                        "snippet": r.get("body", ""),
-                        "source": source,
-                        "query": q,
-                    })
-            except Exception as e:
-                # Continue gracefully if one query fails (rate limit, etc.)
+        for r in raw_results:
+            if r.get("error"):
                 results.append({
-                    "title": f"[Search error for query: {q}]",
+                    "title": r["title"],
                     "link": "",
-                    "snippet": str(e),
+                    "snippet": r["snippet"],
                     "source": "Error",
                     "query": q,
                 })
-            time.sleep(0.5)  # be polite / avoid rate-limiting
+                continue
+
+            link = r["link"]
+            if not link or link in seen_links:
+                continue
+            seen_links.add(link)
+
+            # Determine which "platform" this came from for labeling
+            source = "Web"
+            link_lower = link.lower()
+            if "linkedin.com" in link_lower:
+                source = "LinkedIn"
+            elif "x.com" in link_lower or "twitter.com" in link_lower:
+                source = "X / Twitter"
+            elif "instagram.com" in link_lower:
+                source = "Instagram"
+            elif "facebook.com" in link_lower:
+                source = "Facebook"
+
+            results.append({
+                "title": r["title"] or "Untitled",
+                "link": link,
+                "snippet": r["snippet"],
+                "source": source,
+                "query": q,
+            })
+
+        time.sleep(0.5)  # be polite / avoid rate-limiting
 
     return results
