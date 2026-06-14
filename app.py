@@ -1,7 +1,6 @@
 """
 app.py
 Chemical Engineering Opportunity Finder & AI Application Assistant
---------------------------------------------------------------------
 Uses Groq (free, no credit card) for AI features.
 Get your free Groq key at https://console.groq.com
 """
@@ -59,14 +58,15 @@ st.markdown("""
 .badge-field    { background-color: #fff4e5; color: #b35900; }
 .badge-source   { background-color: #f3e8fd; color: #6a1b9a; }
 .badge-deadline { background-color: #fdeaea; color: #c62828; }
+.badge-type     { background-color: #e0f7fa; color: #00695c; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🧪 Chemical Engineering Opportunity Finder")
 st.caption(
-    "Live search across the web (incl. LinkedIn / X / Instagram / Facebook public posts) "
-    "for internships, fellowships, PhD positions, and lab/company contacts — "
-    "plus AI-generated motivation letters, emails, and tailored CVs."
+    "Live search across the web for internships, fellowships, scholarships, "
+    "summer programs, and PhD positions — plus AI-generated motivation letters, "
+    "emails, and tailored CVs."
 )
 
 # ----------------------------------------------------------------------
@@ -80,6 +80,10 @@ if "opportunities" not in st.session_state:
 
 if "search_seed" not in st.session_state:
     st.session_state.search_seed = random.randint(0, 1_000_000)
+
+# CV text stored in session so it survives even if filesystem resets
+if "cv_text_session" not in st.session_state:
+    st.session_state.cv_text_session = ""
 
 
 # ----------------------------------------------------------------------
@@ -119,9 +123,7 @@ with st.sidebar:
         value=os.environ.get("GROQ_API_KEY", ""),
         help=(
             "100% free, no credit card needed. "
-            "Get your key at https://console.groq.com — "
-            "sign in, go to API Keys, click Create API Key. "
-            "Stored only for this session."
+            "Get your key at https://console.groq.com"
         ),
     )
     if api_key_input:
@@ -131,7 +133,6 @@ with st.sidebar:
     st.header("👤 Your Profile")
 
     profile = st.session_state.profile
-
     profile["name"] = st.text_input("Full name", value=profile.get("name", ""))
     profile["summary"] = st.text_area(
         "Short personal description / career goals",
@@ -139,12 +140,11 @@ with st.sidebar:
         height=120,
         placeholder=(
             "e.g. 3rd-year Chemical Engineering student interested in "
-            "sustainable polymers and process optimization, seeking "
-            "summer research internships in Europe..."
+            "sustainable polymers and process optimization..."
         ),
     )
 
-    st.markdown("**Upload your documents**")
+    st.markdown("**Upload your CV / documents**")
     doc_type = st.selectbox(
         "Document type",
         ["CV", "Reference Letter", "Certification", "Transcript", "Other"],
@@ -157,14 +157,50 @@ with st.sidebar:
     )
     if uploaded is not None:
         if st.button("Save document", use_container_width=True):
-            st.session_state.profile = pm.add_document(uploaded, doc_type, profile)
-            st.success(f"Saved {uploaded.name} as {doc_type}")
+            # Extract text immediately and store in session state
+            file_bytes = uploaded.read()
+            ext = uploaded.name.lower().split(".")[-1]
+            extracted = ""
+            try:
+                if ext == "pdf":
+                    from pypdf import PdfReader
+                    reader = PdfReader(io.BytesIO(file_bytes))
+                    extracted = "\n".join(p.extract_text() or "" for p in reader.pages)
+                elif ext in ("docx", "doc"):
+                    doc_obj = Document(io.BytesIO(file_bytes))
+                    extracted = "\n".join(p.text for p in doc_obj.paragraphs)
+                elif ext == "txt":
+                    extracted = file_bytes.decode("utf-8", errors="ignore")
+            except Exception as e:
+                extracted = f"[Could not read file: {e}]"
+
+            if doc_type == "CV":
+                st.session_state.cv_text_session = extracted
+                profile["cv_text"] = extracted
+
+            profile["documents"] = profile.get("documents", [])
+            # Avoid duplicates
+            profile["documents"] = [
+                d for d in profile["documents"] if d.get("filename") != uploaded.name
+            ]
+            profile["documents"].append({
+                "filename": uploaded.name,
+                "type": doc_type,
+                "text": extracted,
+            })
+            st.session_state.profile = profile
+            pm.save_profile(profile)
+            st.success(f"✅ Saved {uploaded.name} as {doc_type}")
             st.rerun()
 
+    # Show saved documents
     if profile.get("documents"):
         st.markdown("**Saved documents:**")
         for d in profile["documents"]:
             st.write(f"- {d['filename']}  _({d['type']})_")
+        # Restore cv_text_session if empty but profile has it
+        if not st.session_state.cv_text_session and profile.get("cv_text"):
+            st.session_state.cv_text_session = profile["cv_text"]
 
     if st.button("💾 Save profile info", use_container_width=True):
         pm.save_profile(profile)
@@ -175,22 +211,22 @@ with st.sidebar:
 # ----------------------------------------------------------------------
 st.subheader("🔍 Search Filters")
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     field = st.text_input(
         "Field / specialization",
         value="chemical engineering",
-        placeholder="e.g. polymer chemistry, process safety, battery materials",
+        placeholder="e.g. polymer chemistry, process safety...",
     )
     place = st.text_input("Place (country/city, or 'Anywhere')", value="Anywhere")
 
 with col2:
+    opp_type = st.selectbox(
+        "Opportunity type",
+        ["Any", "Internship", "Fellowship", "Scholarship", "Summer Program", "PhD Position", "Research Position"],
+    )
     degree = st.selectbox(
         "Degree level", ["Any", "Undergraduate", "Master", "PhD", "Postdoc"]
-    )
-    duration = st.selectbox(
-        "Duration",
-        ["Any", "1-2 months", "3 months", "6 months", "1 year", "2+ years"],
     )
 
 with col3:
@@ -198,15 +234,20 @@ with col3:
         "Funding",
         ["Any", "Fully Funded", "Partially Funded", "Stipend", "Unfunded"],
     )
+    duration = st.selectbox(
+        "Duration",
+        ["Any", "1-2 months", "3 months", "6 months", "1 year", "2+ years"],
+    )
+
+with col4:
     period = st.selectbox(
         "Period",
         ["Any", "Summer 2026", "Fall 2026", "Spring 2027", "Rolling / Year-round"],
     )
-
-include_social = st.checkbox(
-    "Include LinkedIn / X / Instagram / Facebook public posts in search",
-    value=True,
-)
+    include_social = st.checkbox(
+        "Include LinkedIn / X / social media",
+        value=True,
+    )
 
 search_clicked = st.button(
     "🔄  Search for Opportunities", type="primary", use_container_width=True
@@ -229,7 +270,7 @@ if st.button("🧪 Test Groq API Key", use_container_width=True):
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama3-8b-8192",
+                    "model": "llama-3.3-70b-versatile",
                     "max_tokens": 10,
                     "messages": [{"role": "user", "content": "Say hello in one word."}],
                 },
@@ -253,9 +294,14 @@ if search_clicked:
     else:
         st.session_state.search_seed = random.randint(0, 1_000_000)
 
+        # Build search term incorporating opportunity type
+        search_field = field
+        if opp_type != "Any":
+            search_field = f"{field} {opp_type}"
+
         with st.spinner("Searching the web for opportunities..."):
             raw = se.search_opportunities(
-                field=field,
+                field=search_field,
                 place=place,
                 degree=degree,
                 funding=funding,
@@ -268,21 +314,18 @@ if search_clicked:
         if not raw:
             st.error(
                 "⚠️ Web search returned 0 results. "
-                "DuckDuckGo may be rate-limiting this deployment. "
-                "Wait 30 seconds and try again."
+                "DuckDuckGo may be rate-limiting. Wait 30 seconds and try again."
             )
         else:
-            st.info(
-                f"🔎 Found {len(raw)} raw search results — asking AI to structure them..."
-            )
+            st.info(f"🔎 Found {len(raw)} raw results — asking AI to structure them...")
             with st.spinner("Organizing results with AI..."):
                 structured = ai.structure_opportunities(
-                    raw, field, api_key=st.session_state["api_key"]
+                    raw, search_field, api_key=st.session_state["api_key"]
                 )
             st.session_state.opportunities = structured
             if not structured:
                 st.warning(
-                    f"AI could not extract structured opportunities from {len(raw)} raw results. "
+                    "AI could not extract structured opportunities. "
                     "Check your Groq API key and try a more specific field."
                 )
 
@@ -292,130 +335,4 @@ if search_clicked:
 def matches_filters(opp):
     if degree != "Any" and opp.get("degree_level") not in (degree, "Any", "Not specified"):
         return False
-    if funding != "Any" and opp.get("funding") not in (funding, "Not specified"):
-        return False
-    return True
-
-
-display_list = [o for o in st.session_state.opportunities if matches_filters(o)]
-
-# ----------------------------------------------------------------------
-# Display results
-# ----------------------------------------------------------------------
-st.subheader(f"📋 Opportunities ({len(display_list)})")
-
-if not display_list:
-    st.info(
-        "No opportunities loaded yet. Set your filters above and click **Search for Opportunities**."
-    )
-else:
-    for idx, opp in enumerate(display_list):
-        with st.container():
-            st.markdown(
-                f"""
-<div class="opportunity-card">
-  <div class="opportunity-title">{opp.get('title','Untitled')}</div>
-  <div class="opportunity-org">{opp.get('organization','Unknown organization')} — {opp.get('location','Not specified')}</div>
-  <span class="badge badge-deadline">⏰ Deadline: {opp.get('deadline','Not specified')}</span>
-  <span class="badge badge-funding">💰 {opp.get('funding','Not specified')}</span>
-  <span class="badge badge-degree">🎓 {opp.get('degree_level','Not specified')}</span>
-  <span class="badge badge-field">🧪 {opp.get('field','Not specified')}</span>
-  <span class="badge badge-source">🌐 {opp.get('source','Web')}</span>
-  <p style="margin-top:8px;">{opp.get('summary','')}</p>
-  <p style="font-size:0.85rem; color:#777;">
-    📅 Period: {opp.get('period','Not specified')} &nbsp;|&nbsp;
-    ⌛ Duration: {opp.get('duration','Not specified')} &nbsp;|&nbsp;
-    📧 Contact: {opp.get('contact','Not specified')}
-  </p>
-  <a href="{opp.get('link','#')}" target="_blank">🔗 Open original listing</a>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
-
-            with st.expander("✨ Generate personalized application materials"):
-                profile_text = pm.get_combined_profile_text(st.session_state.profile)
-                if not profile_text.strip():
-                    st.warning(
-                        "Upload your CV in the sidebar first so materials can be personalized."
-                    )
-                else:
-                    bcol1, bcol2, bcol3 = st.columns(3)
-
-                    with bcol1:
-                        if st.button("📝 Motivation Letter", key=f"letter_{idx}"):
-                            with st.spinner("Writing motivation letter..."):
-                                letter = ai.generate_motivation_letter(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"letter_text_{idx}"] = letter
-
-                    with bcol2:
-                        if st.button("📧 Outreach Email", key=f"email_{idx}"):
-                            with st.spinner("Writing email..."):
-                                email = ai.generate_email(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"email_text_{idx}"] = email
-
-                    with bcol3:
-                        if st.button("📄 Tailored CV Sections", key=f"cv_{idx}"):
-                            with st.spinner("Tailoring CV..."):
-                                cv_text = ai.generate_tailored_cv_sections(
-                                    profile_text, opp, api_key=st.session_state["api_key"]
-                                )
-                            st.session_state[f"cv_text_{idx}"] = cv_text
-
-                    if f"letter_text_{idx}" in st.session_state:
-                        st.text_area(
-                            "Motivation Letter",
-                            st.session_state[f"letter_text_{idx}"],
-                            height=300,
-                            key=f"letter_area_{idx}",
-                        )
-                        st.download_button(
-                            "⬇️ Download Letter (.docx)",
-                            data=text_to_docx_bytes(
-                                st.session_state[f"letter_text_{idx}"], "Motivation Letter"
-                            ),
-                            file_name=f"motivation_letter_{idx+1}.docx",
-                            key=f"dl_letter_{idx}",
-                        )
-
-                    if f"email_text_{idx}" in st.session_state:
-                        st.text_area(
-                            "Outreach Email",
-                            st.session_state[f"email_text_{idx}"],
-                            height=200,
-                            key=f"email_area_{idx}",
-                        )
-                        st.download_button(
-                            "⬇️ Download Email (.docx)",
-                            data=text_to_docx_bytes(
-                                st.session_state[f"email_text_{idx}"], "Outreach Email"
-                            ),
-                            file_name=f"email_{idx+1}.docx",
-                            key=f"dl_email_{idx}",
-                        )
-
-                    if f"cv_text_{idx}" in st.session_state:
-                        st.text_area(
-                            "Tailored CV Sections",
-                            st.session_state[f"cv_text_{idx}"],
-                            height=300,
-                            key=f"cv_area_{idx}",
-                        )
-                        st.download_button(
-                            "⬇️ Download CV Sections (.docx)",
-                            data=text_to_docx_bytes(
-                                st.session_state[f"cv_text_{idx}"], "Tailored CV Sections"
-                            ),
-                            file_name=f"tailored_cv_{idx+1}.docx",
-                            key=f"dl_cv_{idx}",
-                        )
-
-st.divider()
-st.caption(
-    "⚠️ Always verify deadlines and details on the original listing before applying. "
-    "AI-generated text should be reviewed and personalized further before sending."
-)
+    if funding != "Any" and opp.get("funding") not in (funding,
