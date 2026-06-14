@@ -12,6 +12,7 @@ from docx import Document
 
 PROFILE_DIR = os.path.join(os.path.dirname(__file__), "..", "profile_data")
 PROFILE_JSON = os.path.join(PROFILE_DIR, "profile.json")
+OPPORTUNITIES_JSON = os.path.join(PROFILE_DIR, "opportunities.json")
 
 os.makedirs(PROFILE_DIR, exist_ok=True)
 
@@ -83,7 +84,7 @@ def add_document(uploaded_file, doc_type: str, profile: dict) -> dict:
         "type": doc_type,
         "text": text,
     })
-    if doc_type == "CV" :
+    if doc_type == "CV":
         profile["cv_text"] = text
     save_profile(profile)
     return profile
@@ -101,3 +102,46 @@ def get_combined_profile_text(profile: dict) -> str:
         if doc["type"] != "CV":
             parts.append(f"{doc['type'].upper()} ({doc['filename']}):\n{doc['text'][:3000]}")
     return "\n\n---\n\n".join(parts)
+
+
+# ----------------------------------------------------------------------
+# Opportunities persistence
+# ----------------------------------------------------------------------
+def load_opportunities() -> list:
+    """Load previously found opportunities from disk so they survive
+    page refreshes / new sessions (as long as the app server itself
+    hasn't been restarted/redeployed)."""
+    if os.path.exists(OPPORTUNITIES_JSON):
+        try:
+            with open(OPPORTUNITIES_JSON, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_opportunities(opportunities: list):
+    with open(OPPORTUNITIES_JSON, "w", encoding="utf-8") as f:
+        json.dump(opportunities, f, ensure_ascii=False, indent=2)
+
+
+def merge_opportunities(existing: list, new_items: list) -> list:
+    """Merge newly found opportunities into the existing list,
+    de-duplicating by link so nothing is lost between searches."""
+    seen_links = {o.get("link") for o in existing if o.get("link")}
+    merged = list(existing)
+    added = 0
+    for item in new_items:
+        link = item.get("link")
+        if link and link in seen_links:
+            continue
+        if link:
+            seen_links.add(link)
+        merged.append(item)
+        added += 1
+    return merged, added
+
+
+def clear_opportunities():
+    if os.path.exists(OPPORTUNITIES_JSON):
+        os.remove(OPPORTUNITIES_JSON)
