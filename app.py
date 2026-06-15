@@ -331,11 +331,24 @@ with st.sidebar:
                 else:
                     st.info(f"Found {len(raw)} raw results — organising with AI…")
                     with st.spinner("Organising results…"):
-                        structured = ai.structure_opportunities(
-                            raw, field, api_key=st.session_state["api_key"]
+                        try:
+                            structured = ai.structure_opportunities(
+                                raw, field, api_key=st.session_state["api_key"]
+                            )
+                        except ValueError as e:
+                            st.error(f"❌ API key error: {e}")
+                            structured = None
+                        except Exception as e:
+                            st.error(f"❌ Unexpected error while calling AI: {e}")
+                            structured = None
+                    if structured is None:
+                        pass  # error already shown above
+                    elif not structured:
+                        st.warning(
+                            "⚠️ AI returned no structured opportunities from these results. "
+                            "This can happen when the LLM response isn't valid JSON. "
+                            "Try pressing Search again — results rotate each time."
                         )
-                    if not structured:
-                        st.warning("AI could not extract opportunities. Check your key.")
                     else:
                         merged, added = pm.merge_opportunities(
                             st.session_state.opportunities, structured
